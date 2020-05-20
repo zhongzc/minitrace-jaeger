@@ -189,7 +189,7 @@ where
                 references,
                 flags: 1,
                 start_time: ((start_time_ms + span.elapsed_start as u64) * 1000) as i64,
-                duration: (dbg!(span.elapsed_end - span.elapsed_start) * 1000) as i64,
+                duration: ((span.elapsed_end - span.elapsed_start) * 1000) as i64,
                 tags: vec![],
                 logs: vec![],
             }
