@@ -23,7 +23,7 @@ impl JaegerCompactReporter {
     }
 
     /// Reports `spans`.
-    pub fn report<F>(&self, spans: &[minitrace::Span], tag_display: F) -> Result<()>
+    pub fn report<F>(&self, spans: &[minitrace::SpanSet], event_display: F) -> Result<()>
     where
         F: Fn(u32) -> String,
     {
@@ -34,7 +34,7 @@ impl JaegerCompactReporter {
                 message.compact_encode(&mut bytes)?;
                 Ok(bytes)
             },
-            tag_display,
+            event_display,
         )
     }
 }
@@ -58,7 +58,7 @@ impl JaegerBinaryReporter {
     }
 
     /// Reports `spans`.
-    pub fn report<F>(&self, spans: &[minitrace::Span], tag_display: F) -> Result<()>
+    pub fn report<F>(&self, spans: &[minitrace::SpanSet], event_display: F) -> Result<()>
     where
         F: Fn(u32) -> String,
     {
@@ -69,7 +69,7 @@ impl JaegerBinaryReporter {
                 message.binary_encode(&mut bytes)?;
                 Ok(bytes)
             },
-            tag_display,
+            event_display,
         )
     }
 }
@@ -109,14 +109,19 @@ impl JaegerReporter {
         Ok(())
     }
 
-    fn report<F, TF>(&self, spans: &[minitrace::Span], encode: F, tag_display: TF) -> Result<()>
+    fn report<F, TF>(
+        &self,
+        spans: &[minitrace::SpanSet],
+        encode: F,
+        event_display: TF,
+    ) -> Result<()>
     where
         F: FnOnce(thrift_codec::message::Message) -> Result<Vec<u8>>,
         TF: Fn(u32) -> String,
     {
         let batch = crate::thrift::jaeger::Batch {
             process: self.process.clone(),
-            spans: map_span(spans, tag_display)?,
+            spans: map_span(spans, event_display)?,
         };
         let message =
             thrift_codec::message::Message::from(crate::thrift::agent::EmitBatchNotification {
@@ -142,8 +147,8 @@ fn udp_socket(agent: std::net::SocketAddr) -> Result<std::net::UdpSocket> {
 }
 
 fn map_span<F>(
-    spans: &[minitrace::Span],
-    tag_display: F,
+    span_sets: &[minitrace::SpanSet],
+    event_display: F,
 ) -> Result<Vec<crate::thrift::jaeger::Span>>
 where
     F: Fn(u32) -> String,
@@ -152,24 +157,32 @@ where
     let trace_id_low: i64 = rng.gen();
     let trace_id_high: i64 = rng.gen();
 
-    // root
-    let start_time_ms = spans
-        .iter()
-        .find_map(|span| {
-            if let minitrace::Link::Root { start_time_ms } = span.link {
-                Some(start_time_ms)
-            } else {
-                None
-            }
-        })
-        .ok_or("can not get root span")?;
+    let mut res = vec![];
 
-    Ok(spans
-        .iter()
-        .map(|span| {
+    for minitrace::SpanSet {
+        start_time_ns,
+        cycles_per_sec,
+        spans,
+    } in span_sets
+    {
+        if spans.is_empty() {
+            continue;
+        }
+
+        let start_offset = spans[0].begin_cycles;
+        for span in spans {
             let (parent_span_id, references) = match span.link {
-                minitrace::Link::Root { .. } => (0, vec![]),
+                minitrace::Link::Root => (0, vec![]),
                 minitrace::Link::Parent { id } => (
+                    id as i64,
+                    vec![crate::thrift::jaeger::SpanRef {
+                        kind: crate::thrift::jaeger::SpanRefKind::ChildOf,
+                        trace_id_low,
+                        trace_id_high,
+                        span_id: id as i64,
+                    }],
+                ),
+                minitrace::Link::Continue { id } => (
                     id as i64,
                     vec![crate::thrift::jaeger::SpanRef {
                         kind: crate::thrift::jaeger::SpanRefKind::ChildOf,
@@ -180,19 +193,28 @@ where
                 ),
             };
 
-            crate::thrift::jaeger::Span {
+            let start_time = (start_time_ns / 1_000
+                + ((span.begin_cycles - start_offset) as f64 * 1_000_000.0 / *cycles_per_sec as f64)
+                    as u64) as i64;
+
+            let duration = ((span.end_cycles - span.begin_cycles) as f64 * 1_000_000.0
+                / *cycles_per_sec as f64) as i64;
+
+            res.push(crate::thrift::jaeger::Span {
                 trace_id_low,
                 trace_id_high,
                 span_id: span.id as i64,
                 parent_span_id,
-                operation_name: tag_display(span.tag),
+                operation_name: event_display(span.event),
                 references,
                 flags: 1,
-                start_time: ((start_time_ms + span.elapsed_start as u64) * 1000) as i64,
-                duration: ((span.elapsed_end - span.elapsed_start) * 1000) as i64,
+                start_time,
+                duration,
                 tags: vec![],
                 logs: vec![],
-            }
-        })
-        .collect())
+            });
+        }
+    }
+
+    Ok(res)
 }

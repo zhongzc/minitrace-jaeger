@@ -16,20 +16,18 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let (tx, mut rx) = minitrace::Collector::bounded(5);
+        let (root, collector) = minitrace::trace_enable(Event::Parent as u32);
         {
-            let span = minitrace::new_span_root(tx, Event::Parent as u32);
-            let _g = span.enter();
+            let _guard = root;
             std::thread::sleep(std::time::Duration::from_millis(10));
             {
-                let span = minitrace::new_span(Event::Child as u32);
-                let _g = span.enter();
+                let _guard = minitrace::new_span(Event::Child as u32);
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
 
-        let spans = rx.collect().unwrap();
+        let spans = collector.collect();
         let reporter = crate::JaegerCompactReporter::new("minitrace_demo").unwrap();
         reporter
             .report(&spans, |tag| {

@@ -5,6 +5,6 @@ authors = ["zhongzc <zhongzc_arch@outlook.com>"]
 edition = "2018"
 
 [dependencies]
-minitrace = { git = "https://github.com/zhongzc/minitrace.git" }
+minitrace = { git = "https://github.com/zhongzc/minitrace.git", branch = "lock-free" }
 rand = "0.7.3"
 thrift_codec = "0.1.1"
