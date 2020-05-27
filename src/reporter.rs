@@ -185,7 +185,7 @@ where
                 minitrace::Link::Continue { id } => (
                     id as i64,
                     vec![crate::thrift::jaeger::SpanRef {
-                        kind: crate::thrift::jaeger::SpanRefKind::ChildOf,
+                        kind: crate::thrift::jaeger::SpanRefKind::FollowsFrom,
                         trace_id_low,
                         trace_id_high,
                         span_id: id as i64,
